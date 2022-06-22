@@ -1,0 +1,775 @@
+---
+title: "PM2.5 Components Modeling in the United States; EC, 2000 to 2019"
+author: "Heresh Amini"
+date: "06/22/2022"
+output: html_document
+---
+
+<p style="font-family: times, serif; font-size:18pt">
+**For urban areas, first, following learners were trained: Random Forest (RF), Stochastic Gradient Boosting (GBM), and eXtreme Gradient Boosting (xgbTree). Next, four super-learners (SVM, RF, GBM, and xgbTree) were trained and the best was chosen as final model.**   
+</p>
+
+```{r warning = FALSE, message=FALSE, echo=FALSE}
+library(caret)
+library(caretEnsemble)
+library(mgcv)
+library(doParallel)
+library(gbm)
+library(iml)
+library(jpeg)
+library(shapr)
+
+cl <- makePSOCKcluster(detectCores() - 1)
+registerDoParallel(cl)
+#setwd("...")
+
+setwd("D:/finalmodelsurbanareas50m/ec")
+#ec.2000t19
+annual.ec <- readRDS("annualmean.ec.rds")
+annual.ec.numeric.only.2000t19 <- annual.ec[,c(-1,-2,-5,-69:-80,-84:-89,-92:-96,-99:-103)]
+options(max.print=999999)
+names(annual.ec.numeric.only.2000t19)
+summary(annual.ec.numeric.only.2000t19)
+
+```
+
+<p style="font-family: times, serif; font-size:18pt">
+**Histogram of original ec values**
+</p>
+
+```{r warning = FALSE, message=FALSE, echo=FALSE}
+hist(annual.ec.numeric.only.2000t19$value)
+summary(annual.ec.numeric.only.2000t19$value)
+annual.ec.numeric.only.2000t19$value[annual.ec.numeric.only.2000t19$value==0] <- 0.01
+annual.ec.numeric.only.2000t19$value <- log(annual.ec.numeric.only.2000t19$value)
+```
+<p style="font-family: times, serif; font-size:18pt">
+**Histogram of log-transformed ec values**
+</p>
+
+```{r warning = FALSE, message=FALSE, echo=FALSE}
+hist(annual.ec.numeric.only.2000t19$value)
+summary(annual.ec.numeric.only.2000t19$value)
+
+```
+<p style="font-family: times, serif; font-size:18pt">
+**The total number of observations for ec in 2000t19 were `r nrow(annual.ec.numeric.only.2000t19)`.**
+</p>
+
+<p style="font-family: times, serif; font-size:18pt">
+**The total number of sites per year for ec in 2000t19 were `r table(annual.ec.numeric.only.2000t19$year)`.**
+</p>
+```{r warning = FALSE, message=FALSE, echo=FALSE}
+preObj <- preProcess(annual.ec.numeric.only.2000t19[,-c(1:4)], method=c("center", "scale"))
+saveRDS(preObj, "preProcess.preObj.ec.rds")
+newData <- predict(preObj, annual.ec.numeric.only.2000t19)
+newData <- na.omit(newData)
+newData <- as.data.frame(newData)
+
+options(max.print=999999)
+summary(newData)
+
+set.seed(2020)
+inTraining <- sample.int(n = nrow(newData), size = floor(.7*nrow(newData)), replace = F)
+training <- newData[inTraining, ]
+testing  <- newData[-inTraining, ]
+
+write.csv(training, "training ec 2000t19.csv")
+write.csv(testing, "testing ec 2000t19.csv")
+
+#Defining the training control
+fitControl <- trainControl(method = "cv",
+                           number = 10,
+                           savePredictions = 'final' # To save out of fold predictions for best parameter combinantions
+                           )
+#Fit1
+set.seed(2020)
+start.time <- proc.time()
+rf.2000t19.ec <- train(value ~ ., data = training,
+                         method = "rf",
+                         verbose = FALSE,
+                         trControl = fitControl)
+ time.needed.seconds <- proc.time() - start.time
+ time.needed.seconds <- t(data.matrix(time.needed.seconds))
+ time.needed.seconds <- time.needed.seconds[,3]
+ saveRDS(rf.2000t19.ec, "rf.2000t19.ec.rds")
+ rf.2000t19.ec.optimal.model <- getTrainPerf(rf.2000t19.ec)
+ rf.2000t19.ec.optimal.model <- cbind(rf.2000t19.ec.optimal.model,time.needed.seconds)
+
+#Fit2
+ set.seed(2020)
+ start.time <- proc.time()
+ gbm.2000t19.ec <- train(value ~ ., data = training, 
+                      method = "gbm", 
+                      verbose = FALSE,
+                      trControl = fitControl,
+                      tuneLength = 10)
+ time.needed.seconds <- proc.time() - start.time
+ time.needed.seconds <- t(data.matrix(time.needed.seconds))
+ time.needed.seconds <- time.needed.seconds[,3]
+ saveRDS(gbm.2000t19.ec, "gbm.2000t19.ec.rds")
+ gbm.2000t19.ec.optimal.model <- getTrainPerf(gbm.2000t19.ec)
+ gbm.2000t19.ec.optimal.model <- cbind(gbm.2000t19.ec.optimal.model,time.needed.seconds)
+
+#Fit3
+ set.seed(2020)
+ start.time <- proc.time()
+ xgbTree.2000t19.ec <- train(value ~ ., data = training, 
+                          method = "xgbTree", 
+                          verbose = FALSE,
+                          trControl = fitControl,
+                          tuneLength = 5)
+ time.needed.seconds <- proc.time() - start.time
+ time.needed.seconds <- t(data.matrix(time.needed.seconds))
+ time.needed.seconds <- time.needed.seconds[,3]
+ saveRDS(xgbTree.2000t19.ec, "xgbTree.2000t19.ec.rds")
+ xgbTree.2000t19.ec <- readRDS("xgbTree.2000t19.ec.rds")
+ xgbTree.2000t19.ec.optimal.model <- getTrainPerf(xgbTree.2000t19.ec)
+ xgbTree.2000t19.ec.optimal.model <- cbind(xgbTree.2000t19.ec.optimal.model,time.needed.seconds)
+
+All.winning.models.in.training.ec.2000t19 <- rbind (rf.2000t19.ec.optimal.model,
+                                                 gbm.2000t19.ec.optimal.model,
+                                                 xgbTree.2000t19.ec.optimal.model)
+
+All.winning.models.in.training.ec.2000t19.sortedbyRMSE <- All.winning.models.in.training.ec.2000t19[order(All.winning.models.in.training.ec.2000t19$TrainRMSE),] 
+
+All.winning.models.in.training.ec.2000t19.sortedbyRMSE
+
+write.csv(All.winning.models.in.training.ec.2000t19.sortedbyRMSE,"All.winning.models.in.training.ec.2000t19.csv")
+
+training$rf.ec<-rf.2000t19.ec$pred$pred[order(rf.2000t19.ec$pred$rowIndex)]
+training$gbm.ec<-gbm.2000t19.ec$pred$pred[order(gbm.2000t19.ec$pred$rowIndex)]
+training$xgb.ec<-xgbTree.2000t19.ec$pred$pred[order(xgbTree.2000t19.ec$pred$rowIndex)]
+
+#Predicting for the test data
+testing$rf.ec <- predict.train(rf.2000t19.ec, newdata = testing)
+testing$xgb.ec <- predict.train(xgbTree.2000t19.ec, newdata = testing)
+testing$gbm.ec <- predict.train(gbm.2000t19.ec, newdata = testing)
+
+training2 <- training[,c(1:4,168:170)]
+training2 <- na.omit(training2)
+i <- c(1:7) 
+training2[ , i] <- apply(training2[ , i], 2,            
+                    function(x) as.numeric(as.character(x)))
+training2$year <- as.factor(training2$year)
+
+#Defining the training control for super learning or GAM-ENWA
+fitControl2 <- trainControl(method = "cv",
+                           number = 10,
+                           savePredictions = 'final'
+                           )
+#Fit1
+set.seed(2020)
+start.time <- proc.time()
+SVMPoly.2000t19.ec.SuperLearner <- train(value ~ ., data = training2,
+                         method = "svmPoly",
+                         verbose = FALSE,
+                         trControl = fitControl2)
+time.needed.seconds <- proc.time() - start.time
+time.needed.seconds <- t(data.matrix(time.needed.seconds))
+time.needed.seconds <- time.needed.seconds[,3]
+saveRDS(SVMPoly.2000t19.ec.SuperLearner, "SVMPoly.2000t19.ec.SuperLearner.rds")
+SVMPoly.2000t19.ec.SuperLearner.optimal.model <- getTrainPerf(SVMPoly.2000t19.ec.SuperLearner)
+SVMPoly.2000t19.ec.SuperLearner.optimal.model <- cbind(SVMPoly.2000t19.ec.SuperLearner.optimal.model,time.needed.seconds)
+
+#Fit2
+set.seed(2020)
+start.time <- proc.time()
+rf.2000t19.ec.SuperLearner <- train(value ~ ., data = training2,
+                        method = "rf",
+                        verbose = FALSE,
+                        trControl = fitControl2,
+                        tuneLength = 10)
+time.needed.seconds <- proc.time() - start.time
+time.needed.seconds <- t(data.matrix(time.needed.seconds))
+time.needed.seconds <- time.needed.seconds[,3]
+saveRDS(rf.2000t19.ec.SuperLearner, "rf.2000t19.ec.SuperLearner.rds")
+rf.2000t19.ec.SuperLearner.optimal.model <- getTrainPerf(rf.2000t19.ec.SuperLearner)
+rf.2000t19.ec.SuperLearner.optimal.model <- cbind(rf.2000t19.ec.SuperLearner.optimal.model,time.needed.seconds)
+
+#Fit3
+# set.seed(2020)
+start.time <- proc.time()
+gbm.2000t19.ec.SuperLearner <- train(value ~ ., data = training2,
+                     method = "gbm",
+                     verbose = FALSE,
+                     trControl = fitControl2,
+                     tuneLength = 10)
+time.needed.seconds <- proc.time() - start.time
+time.needed.seconds <- t(data.matrix(time.needed.seconds))
+time.needed.seconds <- time.needed.seconds[,3]
+saveRDS(gbm.2000t19.ec.SuperLearner, "gbm.2000t19.ec.SuperLearner.rds")
+gbm.2000t19.ec.SuperLearner.optimal.model <- getTrainPerf(gbm.2000t19.ec.SuperLearner)
+gbm.2000t19.ec.SuperLearner.optimal.model <- cbind(gbm.2000t19.ec.SuperLearner.optimal.model,time.needed.seconds)
+
+#Fit4
+set.seed(2020)
+start.time <- proc.time()
+xgbTree.2000t19.ec.SuperLearner <- train(value ~ ., data = training2,
+                         method = "xgbTree",
+                         verbose = FALSE,
+                         trControl = fitControl2,
+                         tuneLength = 5)
+time.needed.seconds <- proc.time() - start.time
+time.needed.seconds <- t(data.matrix(time.needed.seconds))
+time.needed.seconds <- time.needed.seconds[,3]
+saveRDS(xgbTree.2000t19.ec.SuperLearner, "xgbTree.2000t19.ec.SuperLearner.rds")
+xgbTree.2000t19.ec.SuperLearner.optimal.model <- getTrainPerf(xgbTree.2000t19.ec.SuperLearner)
+xgbTree.2000t19.ec.SuperLearner.optimal.model <- cbind(xgbTree.2000t19.ec.SuperLearner.optimal.model,time.needed.seconds)
+
+All.winning.models.in.training2.ec.SuperLearner.2000t19 <- rbind (SVMPoly.2000t19.ec.SuperLearner.optimal.model,
+                                                 rf.2000t19.ec.SuperLearner.optimal.model,
+                                                 gbm.2000t19.ec.SuperLearner.optimal.model,
+                                                 xgbTree.2000t19.ec.SuperLearner.optimal.model)
+All.winning.models.in.training2.ec.SuperLearner.2000t19.sortedbyRMSE <- All.winning.models.in.training2.ec.SuperLearner.2000t19[order(All.winning.models.in.training2.ec.SuperLearner.2000t19$TrainRMSE),]
+
+All.winning.models.in.training2.ec.SuperLearner.2000t19.sortedbyRMSE
+
+write.csv(All.winning.models.in.training2.ec.SuperLearner.2000t19.sortedbyRMSE,"All.winning.models.in.training2.ec.SuperLearner.2000t19.csv")
+
+#Develop GAM-ENWA model
+gam.2000t19.ec.WeightedAverage <- gam(value ~ s(lat, lon, by=rf.ec, bs="tp")+s(lat, lon, by=gbm.ec, bs="tp")+s(lat, lon, by=xgb.ec, bs="tp"), method = "REML",data=training2)
+saveRDS(gam.2000t19.ec.WeightedAverage, "gam.2000t19.ec.WeightedAverage.rds")
+summary(gam.2000t19.ec.WeightedAverage)
+
+#Predict by SuperLearner models in test set
+testing2 <-testing[,c(1:4, 168:170)]
+i <- c(1:7) 
+testing2[ , i] <- apply(testing2[ , i], 2,            
+                    function(x) as.numeric(as.character(x)))
+testing2$year <- as.factor(testing2$year)
+
+testing2$svm_SuperLearner.ec <- predict.train(SVMPoly.2000t19.ec.SuperLearner, newdata = testing2)
+testing2$rf_SuperLearner.ec <- predict.train(rf.2000t19.ec.SuperLearner, newdata = testing2)
+testing2$xgb_SuperLearner.ec <- predict.train(xgbTree.2000t19.ec.SuperLearner, newdata = testing2)
+testing2$gbm_SuperLearner.ec <- predict.train(gbm.2000t19.ec.SuperLearner, newdata = testing2)
+
+testing2$gam_WeightedAverage.ec <- predict(gam.2000t19.ec.WeightedAverage, newdata = testing2)
+
+```
+
+```{r warning = FALSE, message=FALSE}
+testing3 <- testing2
+
+```
+
+```{r warning = FALSE, message=FALSE}
+mod2 <- lm(value ~ rf.ec, data=testing3)
+summary(mod2)
+r.squared.rf.in.test <- summary(mod2)$r.squared
+r.squared.rf.in.test
+```
+
+```{r warning = FALSE, message=FALSE}
+mod3 <- lm(value ~ xgb.ec, data=testing3)
+summary(mod3)
+
+r.squared.xgb.in.test <- summary(mod3)$r.squared
+r.squared.xgb.in.test
+```
+
+```{r warning = FALSE, message=FALSE}
+mod4 <- lm(value ~ gbm.ec, data=testing3)
+summary(mod4)
+
+r.squared.gbm.in.test <- summary(mod4)$r.squared
+r.squared.gbm.in.test
+```
+
+```{r warning = FALSE, message=FALSE}
+r.squared.all.individual.models <- as.data.frame(rbind(r.squared.rf.in.test,r.squared.xgb.in.test,r.squared.gbm.in.test))
+r.squared.all.individual.models
+write.csv(r.squared.all.individual.models, "r.squared.all.individual.models.ec.2000t19.csv")
+
+```
+
+```{r warning = FALSE, message=FALSE}
+mod5 <- lm(value ~ svm_SuperLearner.ec, data=testing3)
+summary(mod5)
+r.squared.svm.SuperLearner.in.test <- summary(mod5)$r.squared
+r.squared.svm.SuperLearner.in.test
+```
+
+```{r warning = FALSE, message=FALSE}
+mod6 <- lm(value ~ rf_SuperLearner.ec, data=testing3)
+summary(mod6)
+r.squared.rf.SuperLearner.in.test <- summary(mod6)$r.squared
+r.squared.rf.SuperLearner.in.test
+```
+
+```{r warning = FALSE, message=FALSE}
+mod7 <- lm(value ~ xgb_SuperLearner.ec, data=testing3)
+summary(mod7)
+
+r.squared.xgb.SuperLearner.in.test <- summary(mod7)$r.squared
+r.squared.xgb.SuperLearner.in.test
+```
+
+```{r warning = FALSE, message=FALSE}
+mod8 <- lm(value ~ gbm_SuperLearner.ec, data=testing3)
+summary(mod8)
+
+r.squared.gbm.SuperLearner.in.test <- summary(mod8)$r.squared
+r.squared.gbm.SuperLearner.in.test
+```
+
+```{r warning = FALSE, message=FALSE}
+mod9 <- lm(value ~ gam_WeightedAverage.ec, data=testing3)
+summary(mod9)
+
+r.squared.gam.WeightedAverage.in.test <- summary(mod9)$r.squared
+r.squared.gam.WeightedAverage.in.test
+```
+
+```{r warning = FALSE, message=FALSE}
+r.squared.all.SLWA.models <- as.data.frame(rbind(r.squared.svm.SuperLearner.in.test, r.squared.rf.SuperLearner.in.test,r.squared.xgb.SuperLearner.in.test,r.squared.gbm.SuperLearner.in.test,r.squared.gam.WeightedAverage.in.test))
+write.csv(r.squared.all.SLWA.models, "r.squared.all.SLWA.models.ec.2000t19.csv")
+r.squared.all.SLWA.models
+```
+
+
+
+```{r warning = FALSE, message=FALSE}
+testing3 <- testing2
+
+testing3$residuals <- testing3$value - testing3$svm_SuperLearner.ec
+
+summary(testing3$residuals)
+
+write.csv(testing3, "testing3.ec.2000t19.csv")
+
+library(ggpubr)
+p1 <- ggplot(testing3, aes(svm_SuperLearner.ec,value, colour = year)) + geom_point(size = 4)+ stat_regline_equation(aes(label =  paste(..rr.label.., sep = "~~~~")))+ theme_bw()
+p2 <- p1 + theme(legend.title = element_text(size = 10), 
+               legend.text = element_text(size = 10),
+               axis.title=element_text(size=14,face="bold"),
+               axis.text=element_text(size=20)) + geom_abline(size=2.5) + labs(x = "Predicted PM2.5 EC by SVM SuperLearner", y="Monitored PM2.5 EC")
+addSmallLegend <- function(myPlot, pointSize = 4, textSize = 22, spaceLegend = 0.6) {
+    myPlot +
+        guides(shape = guide_legend(override.aes = list(size = pointSize)),
+               color = guide_legend(override.aes = list(size = pointSize))) +
+        theme(legend.title = element_text(size = textSize), 
+              legend.text  = element_text(size = textSize),
+              legend.key.size = unit(spaceLegend, "lines"))
+}
+
+# Apply on original plot
+addSmallLegend(p2)
+
+ggsave("ec.one.one.line.jpg", width = 10, height = 8)
+
+library(BlandAltmanLeh)
+
+library(ggExtra)
+
+a <- bland.altman.plot(testing3$value, testing3$svm_SuperLearner.ec, graph.sys="ggplot2")+ xlab("Means of Monitored and Predicted PM2.5 EC") + ylab("Differences of Monitored and Predicted PM2.5 EC")
+
+a
+
+ggMarginal(a, margins="y", yparams = list(size=0.5, colour = "red"),type = "densigram")
+ggsave("ec.BAplot.jpg", width = 10, height = 8)
+
+```
+
+**Final results for Individual models in training**
+```{r warning = FALSE, message=FALSE}
+All.winning.models.in.training.ec.2000t19.sortedbyRMSE
+```
+
+
+**Final results for SuperLearner and WeightedAverage models in training**
+```{r warning = FALSE, message=FALSE}
+All.winning.models.in.training2.ec.SuperLearner.2000t19.sortedbyRMSE
+summary(gam.2000t19.ec.WeightedAverage)
+```
+
+
+**Final results for Individual models in testing**
+```{r warning = FALSE, message=FALSE}
+r.squared.all.individual.models
+```
+
+
+**Final results for SuperLearner and WeightedAverage models in testing**
+```{r warning = FALSE, message=FALSE}
+r.squared.all.SLWA.models
+```
+
+
+**Variable importance of best individual learner in testing**
+**RF**
+```{r warning=FALSE, message=FALSE, echo=FALSE}
+training.4 <- training[,1:167]
+
+library(future)
+future::plan(multisession, workers = 20)
+X <- training.4[which(names(training.4) != "value")]
+
+predictor <- Predictor$new(rf.2000t19.ec, data = X, y = training.4$value)
+
+start.time <- proc.time()
+rfImp.ec <- FeatureImp$new(predictor, loss = "rmse",n.repetitions = 5)
+time.needed.seconds <- proc.time() - start.time
+time.needed.seconds
+
+importance.rf.ec <- as.data.frame(rfImp.ec$results)
+importance.rf.ec
+
+importance.rf.ec$feature[importance.rf.ec$feature=="lon"] <- "Longitude"
+importance.rf.ec$feature[importance.rf.ec$feature=="lat"] <- "Latitude"
+importance.rf.ec$feature[importance.rf.ec$feature=="year"] <- "Year"
+importance.rf.ec$feature[importance.rf.ec$feature=="CFSO318"] <- "Total column ozone"
+importance.rf.ec$feature[importance.rf.ec$feature=="DEM"] <- "Elevation"
+importance.rf.ec$feature[importance.rf.ec$feature=="PPcoal"] <- "Distance to coal-based powerplants"
+importance.rf.ec$feature[importance.rf.ec$feature=="SntnlNO2"] <- "Sentinel 5P NO2"
+importance.rf.ec$feature[importance.rf.ec$feature=="sntnlHCHO"] <- "Sentinel 5P HCHO"
+importance.rf.ec$feature[importance.rf.ec$feature=="sntnlCOml"] <- "Sentinel 5P CO"
+importance.rf.ec$feature[importance.rf.ec$feature=="srad"] <- "Downward short-wave radiation"
+importance.rf.ec$feature[importance.rf.ec$feature=="ERA5dew"] <- "ERA5 dewpoint"
+importance.rf.ec$feature[importance.rf.ec$feature=="tmmx"] <- "gridMET maximum temperature"
+importance.rf.ec$feature[importance.rf.ec$feature=="ERA5prs"] <- "ERA5 surface pressure"
+importance.rf.ec$feature[importance.rf.ec$feature=="ERA5mt"] <- "ERA5 mean temperature"
+importance.rf.ec$feature[importance.rf.ec$feature=="DLWRF"] <- "Downward long-wave radiation"
+importance.rf.ec$feature[importance.rf.ec$feature=="tmmn"] <- "gridMET minimum temperature"
+importance.rf.ec$feature[importance.rf.ec$feature=="eto"] <- "Daily reference evapotranspiration grass-mm"
+importance.rf.ec$feature[importance.rf.ec$feature=="sph"] <- "gridMET specific humididy"
+importance.rf.ec$feature[importance.rf.ec$feature=="ERA5mnt"] <- "ERA5 minimum temperature"
+importance.rf.ec$feature[importance.rf.ec$feature=="tVCF"] <- "MODIS % tree cover"
+importance.rf.ec$feature[importance.rf.ec$feature=="nvVCF"] <- "MODIS % non-vegetated cover"
+importance.rf.ec$feature[importance.rf.ec$feature=="GHS"] <- "Geopotential height surface"
+importance.rf.ec$feature[importance.rf.ec$feature=="ntVCF"] <- "MODIS % non-tree cover"
+importance.rf.ec$feature[importance.rf.ec$feature=="MDNT"] <- "MODIS night temperature"
+importance.rf.ec$feature[importance.rf.ec$feature=="Emis32"] <- "MODIS band 32 emissivity"
+importance.rf.ec$feature[importance.rf.ec$feature=="CFSRH18"] <- "Relative humidity entire atmosphere"
+importance.rf.ec$feature[importance.rf.ec$feature=="DSWRF"] <- "Downward short-wave radiation flux"
+importance.rf.ec$feature[importance.rf.ec$feature=="Emis31"] <- "MODIS band 31 emissivity"
+importance.rf.ec$feature[importance.rf.ec$feature=="SHF"] <- "Sensible heat net flux"
+importance.rf.ec$feature[importance.rf.ec$feature=="pop10k"] <- "Population density within 10 km"
+importance.rf.ec$feature[importance.rf.ec$feature=="PEVR"] <- "Potential evaporation rate"
+importance.rf.ec$feature[importance.rf.ec$feature=="evi"] <- "Enhanced vegetation index"
+importance.rf.ec$feature[importance.rf.ec$feature=="bi"] <- "Burning index"
+importance.rf.ec$feature[importance.rf.ec$feature=="ndvi"] <- "Normalized difference vegetation index"
+importance.rf.ec$feature[importance.rf.ec$feature=="AOD47"] <- "Aerosol optical depths at 0.47 mm"
+importance.rf.ec$feature[importance.rf.ec$feature=="soilm"] <- "Soil moisture"
+importance.rf.ec$feature[importance.rf.ec$feature=="th"] <- "Wind direction"
+importance.rf.ec$feature[importance.rf.ec$feature=="MDDT"] <- "MODIS day temperature"
+importance.rf.ec$feature[importance.rf.ec$feature=="traffic50m"] <- "Traffic counts"
+importance.rf.ec$feature[importance.rf.ec$feature=="pop500"] <- "Population density within 500 m"
+importance.rf.ec$feature[importance.rf.ec$feature=="GHM2016"] <- "Global human modification"
+importance.rf.ec$feature[importance.rf.ec$feature=="VIIRS14"] <- "VIIRS light-at-night"
+importance.rf.ec$feature[importance.rf.ec$feature=="vpd"] <- "Mean vapor pressure deficit"
+importance.rf.ec$feature[importance.rf.ec$feature=="rail5km"] <- "Lenght of railroads within 5 km"
+importance.rf.ec$feature[importance.rf.ec$feature=="rail10km"] <- "Lenght of railroads within 10 km"
+importance.rf.ec$feature[importance.rf.ec$feature=="NHS2500m"] <- "Lenght of highways within 2.5 km"
+importance.rf.ec$feature[importance.rf.ec$feature=="NHS5km"] <- "Lenght of highways within 5 km"
+importance.rf.ec$feature[importance.rf.ec$feature=="ndwi"] <- "Normalized difference water index"
+importance.rf.ec$feature[importance.rf.ec$feature=="ERA5prc"] <- "ERA5 total precipitation"
+importance.rf.ec$feature[importance.rf.ec$feature=="aadtt"] <- "Annual average daily truck traffic"
+importance.rf.ec$feature[importance.rf.ec$feature=="aadt"] <- "Annual average daily traffic"
+importance.rf.ec$feature[importance.rf.ec$feature=="ktnml"] <- "Annual average kilotons of freight per mile"
+importance.rf.ec$feature[importance.rf.ec$feature=="accessibil"] <- "Travel time to nearest densely-populated area"
+importance.rf.ec$feature[importance.rf.ec$feature=="friction"] <- "Land-based travel speed"
+importance.rf.ec$feature[importance.rf.ec$feature=="World_Atla"] <- "World atlas of artificial light-at-night"
+importance.rf.ec$feature[importance.rf.ec$feature=="sntnlso2"] <- "Sentinel 5P SO2"
+importance.rf.ec$feature[importance.rf.ec$feature=="sntnlAER"] <- "Sentinel 5P Absorbing aerosol index"
+importance.rf.ec$feature[importance.rf.ec$feature=="Distiger"] <- "Distance to TIGER inter-state highways"
+importance.rf.ec$feature[importance.rf.ec$feature=="ppwaste50"] <- "Distance to waste power plants"
+importance.rf.ec$feature[importance.rf.ec$feature=="dstciti1m"] <- "Distance to cities above 1 m population"
+importance.rf.ec$feature[importance.rf.ec$feature=="dstciti3k"] <- "Distance to cities above 300 k population"
+importance.rf.ec$feature[importance.rf.ec$feature=="DMSP10"] <- "DMSP light-at-night"
+importance.rf.ec$feature[importance.rf.ec$feature=="Dist_busli"] <- "Distance to bus lines"
+importance.rf.ec$feature[importance.rf.ec$feature=="dist_launc"] <- "Distance to rocket launch sites"
+importance.rf.ec$feature[importance.rf.ec$feature=="Dist_FAF4"] <- "Distance to FAF4 truck routes"
+importance.rf.ec$feature[importance.rf.ec$feature=="Dist_NHS"] <- "Distance to highways"
+importance.rf.ec$feature[importance.rf.ec$feature=="PPnuclear5"] <- "Distance to nuclear power plants"
+importance.rf.ec$feature[importance.rf.ec$feature=="ppstorage5"] <- "Distance to storage power plants"
+importance.rf.ec$feature[importance.rf.ec$feature=="PPfosil"] <- "Distance to fossil fuel-based power plants"
+importance.rf.ec$feature[importance.rf.ec$feature=="PPbiomas"] <- "Distance to biomass fired power plants"
+importance.rf.ec$feature[importance.rf.ec$feature=="PPgas50"] <- "Distance to gas fired power plants"
+importance.rf.ec$feature[importance.rf.ec$feature=="pr"] <- "Precipitation amount"
+
+write.csv(importance.rf.ec, "variable.importance.rf.ec.csv")
+
+importance.rf.ec.best10 <- importance.rf.ec[1:10,]
+importance.rf.ec.best10$feature <- as.character(importance.rf.ec.best10$feature)
+
+ggplot(importance.rf.ec.best10, aes(x=reorder(feature,importance), y=importance, label=round(importance,2))) + 
+  geom_point(fill="black", size=20)  +
+  geom_segment(aes(y = 0, 
+                   x = `feature`, 
+                   yend = importance, 
+                   xend = `feature`), 
+               color = "black") +
+  geom_text(color="white", size=6) +
+  labs(title="PM2.5 EC") + 
+  ylab("Importance for Random Forest")+
+  xlab("Predictor")+
+  scale_y_continuous(expand = expansion(mult = c(0,0.05)))+
+  coord_flip()
+
+ggsave("ec.RF.variable.importance.jpg", width = 9, height = 7)
+```
+
+**GBM**
+
+```{r warning=FALSE, message=FALSE, echo=FALSE}
+
+predictor <- Predictor$new(gbm.2000t19.ec, data = X, y = training.4$value)
+start.time <- proc.time()
+gbmImp.ec <- FeatureImp$new(predictor, loss = "rmse",n.repetitions = 5)
+time.needed.seconds <- proc.time() - start.time
+time.needed.seconds
+
+importance.gbm.ec <- as.data.frame(gbmImp.ec$results)
+importance.gbm.ec
+
+importance.gbm.ec$feature[importance.gbm.ec$feature=="lon"] <- "Longitude"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="lat"] <- "Latitude"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="year"] <- "Year"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="CFSO318"] <- "Total column ozone"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="DEM"] <- "Elevation"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="PPcoal"] <- "Distance to coal-based powerplants"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="SntnlNO2"] <- "Sentinel 5P NO2"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="sntnlHCHO"] <- "Sentinel 5P HCHO"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="sntnlCOml"] <- "Sentinel 5P CO"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="srad"] <- "Downward short-wave radiation"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="ERA5dew"] <- "ERA5 dewpoint"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="tmmx"] <- "gridMET maximum temperature"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="ERA5prs"] <- "ERA5 surface pressure"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="ERA5mt"] <- "ERA5 mean temperature"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="DLWRF"] <- "Downward long-wave radiation"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="tmmn"] <- "gridMET minimum temperature"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="eto"] <- "Daily reference evapotranspiration grass-mm"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="sph"] <- "gridMET specific humididy"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="ERA5mnt"] <- "ERA5 minimum temperature"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="tVCF"] <- "MODIS % tree cover"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="nvVCF"] <- "MODIS % non-vegetated cover"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="GHS"] <- "Geopotential height surface"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="ntVCF"] <- "MODIS % non-tree cover"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="MDNT"] <- "MODIS night temperature"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="Emis32"] <- "MODIS band 32 emissivity"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="CFSRH18"] <- "Relative humidity entire atmosphere"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="DSWRF"] <- "Downward short-wave radiation flux"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="Emis31"] <- "MODIS band 31 emissivity"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="SHF"] <- "Sensible heat net flux"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="pop10k"] <- "Population density within 10 km"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="PEVR"] <- "Potential evaporation rate surface"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="evi"] <- "Enhanced vegetation index"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="bi"] <- "Burning index"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="ndvi"] <- "Normalized difference vegetation index"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="AOD47"] <- "Aerosol optical depths at 0.47 mm"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="soilm"] <- "Soil moisture"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="th"] <- "Wind direction"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="MDDT"] <- "MODIS day temperature"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="traffic50m"] <- "Traffic counts"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="pop500"] <- "Population density within 500 m"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="GHM2016"] <- "Global human modification"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="VIIRS14"] <- "VIIRS light-at-night"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="vpd"] <- "Mean vapor pressure deficit"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="rail5km"] <- "Lenght of railroads within 5 km"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="rail10km"] <- "Lenght of railroads within 10 km"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="NHS2500m"] <- "Lenght of highways within 2.5 km"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="NHS5km"] <- "Lenght of highways within 5 km"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="ndwi"] <- "Normalized difference water index"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="ERA5prc"] <- "ERA5 total precipitation"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="aadtt"] <- "Annual average daily truck traffic"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="aadt"] <- "Annual average daily traffic"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="ktnml"] <- "Annual average kilotons of freight per mile"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="accessibil"] <- "Travel time to nearest densely-populated area"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="friction"] <- "Land-based travel speed"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="World_Atla"] <- "World atlas of artificial light-at-night"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="sntnlso2"] <- "Sentinel 5P SO2"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="sntnlAER"] <- "Sentinel 5P Absorbing aerosol index"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="Distiger"] <- "Distance to TIGER inter-state highways"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="ppwaste50"] <- "Distance to waste power plants"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="dstciti1m"] <- "Distance to cities above 1 m population"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="dstciti3k"] <- "Distance to cities above 300 k population"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="DMSP10"] <- "DMSP light-at-night"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="Dist_busli"] <- "Distance to bus lines"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="dist_launc"] <- "Distance to rocket launch sites"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="Dist_FAF4"] <- "Distance to FAF4 truck routes"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="Dist_NHS"] <- "Distance to highways"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="PPnuclear5"] <- "Distance to nuclear power plants"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="ppstorage5"] <- "Distance to storage power plants"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="PPfosil"] <- "Distance to fossil fuel-based power plants"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="PPbiomas"] <- "Distance to biomass fired power plants"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="PPgas50"] <- "Distance to gas fired power plants"
+importance.gbm.ec$feature[importance.gbm.ec$feature=="pr"] <- "Precipitation amount"
+
+
+write.csv(importance.gbm.ec, "variable.importance.gbm.ec.csv")
+
+importance.gbm.ec.best10 <- importance.gbm.ec[1:10,]
+importance.gbm.ec.best10$feature <- as.character(importance.gbm.ec.best10$feature)
+
+ggplot(importance.gbm.ec.best10, aes(x=reorder(feature,importance), y=importance, label=round(importance,2))) + 
+  geom_point(fill="black", size=20)  +
+  geom_segment(aes(y = 0, 
+                   x = `feature`, 
+                   yend = importance, 
+                   xend = `feature`), 
+               color = "black") +
+  geom_text(color="white", size=6) +
+  labs(title="PM2.5 EC") + 
+  ylab("Importance for Stochastic Gradient Boosting")+
+  xlab("Predictor")+
+  scale_y_continuous(expand = expansion(mult = c(0,0.05)))+
+  coord_flip()
+
+ggsave("ec.gbm.variable.importance.jpg", width = 9, height = 7)
+```
+
+**XGB**
+
+```{r warning=FALSE, message=FALSE, echo=FALSE}
+
+predictor <- Predictor$new(xgbTree.2000t19.ec, data = X, y = training.4$value)
+start.time <- proc.time()
+xgbTreeImp.ec <- FeatureImp$new(predictor, loss = "rmse",n.repetitions = 5)
+time.needed.seconds <- proc.time() - start.time
+time.needed.seconds
+
+importance.xgbTree.ec <- as.data.frame(xgbTreeImp.ec$results)
+importance.xgbTree.ec
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="lon"] <- "Longitude"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="lat"] <- "Latitude"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="year"] <- "Year"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="CFSO318"] <- "Total column ozone"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="DEM"] <- "Elevation"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="PPcoal"] <- "Distance to coal-based powerplants"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="SntnlNO2"] <- "Sentinel 5P NO2"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="sntnlHCHO"] <- "Sentinel 5P HCHO"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="sntnlCOml"] <- "Sentinel 5P CO"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="srad"] <- "Downward short-wave radiation"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="ERA5dew"] <- "ERA5 dewpoint"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="tmmx"] <- "gridMET maximum temperature"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="ERA5prs"] <- "ERA5 surface pressure"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="ERA5mt"] <- "ERA5 mean temperature"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="DLWRF"] <- "Downward long-wave radiation"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="tmmn"] <- "gridMET minimum temperature"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="eto"] <- "Daily reference evapotranspiration grass-mm"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="sph"] <- "gridMET specific humididy"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="ERA5mnt"] <- "ERA5 minimum temperature"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="tVCF"] <- "MODIS % tree cover"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="nvVCF"] <- "MODIS % non-vegetated cover"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="GHS"] <- "Geopotential height surface"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="ntVCF"] <- "MODIS % non-tree cover"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="MDNT"] <- "MODIS night temperature"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="Emis32"] <- "MODIS band 32 emissivity"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="CFSRH18"] <- "Relative humidity entire atmosphere"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="DSWRF"] <- "Downward short-wave radiation flux"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="Emis31"] <- "MODIS band 31 emissivity"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="SHF"] <- "Sensible heat net flux"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="pop10k"] <- "Population density within 10 km"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="PEVR"] <- "Potential evaporation rate surface"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="evi"] <- "Enhanced vegetation index"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="bi"] <- "Burning index"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="ndvi"] <- "Normalized difference vegetation index"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="AOD47"] <- "Aerosol optical depths at 0.47 mm"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="soilm"] <- "Soil moisture"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="th"] <- "Wind direction"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="MDDT"] <- "MODIS day temperature"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="traffic50m"] <- "Traffic counts"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="pop500"] <- "Population density within 500 m"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="GHM2016"] <- "Global human modification"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="VIIRS14"] <- "VIIRS light-at-night"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="vpd"] <- "Mean vapor pressure deficit"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="rail5km"] <- "Lenght of railroads within 5 km"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="rail10km"] <- "Lenght of railroads within 10 km"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="NHS2500m"] <- "Lenght of highways within 2.5 km"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="NHS5km"] <- "Lenght of highways within 5 km"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="ndwi"] <- "Normalized difference water index"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="ERA5prc"] <- "ERA5 total precipitation"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="aadtt"] <- "Annual average daily truck traffic"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="aadt"] <- "Annual average daily traffic"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="ktnml"] <- "Annual average kilotons of freight per mile"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="accessibil"] <- "Travel time to nearest densely-populated area"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="friction"] <- "Land-based travel speed"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="World_Atla"] <- "World atlas of artificial light-at-night"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="sntnlso2"] <- "Sentinel 5P SO2"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="sntnlAER"] <- "Sentinel 5P Absorbing aerosol index"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="Distiger"] <- "Distance to TIGER inter-state highways"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="ppwaste50"] <- "Distance to waste power plants"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="dstciti1m"] <- "Distance to cities above 1 m population"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="dstciti3k"] <- "Distance to cities above 300 k population"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="DMSP10"] <- "DMSP light-at-night"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="Dist_busli"] <- "Distance to bus lines"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="dist_launc"] <- "Distance to rocket launch sites"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="Dist_FAF4"] <- "Distance to FAF4 truck routes"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="Dist_NHS"] <- "Distance to highways"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="PPnuclear5"] <- "Distance to nuclear power plants"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="ppstorage5"] <- "Distance to storage power plants"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="PPfosil"] <- "Distance to fossil fuel-based power plants"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="PPbiomas"] <- "Distance to biomass fired power plants"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="PPgas50"] <- "Distance to gas fired power plants"
+importance.xgbTree.ec$feature[importance.xgbTree.ec$feature=="pr"] <- "Precipitation amount"
+
+write.csv(importance.xgbTree.ec, "variable.importance.xgbTree.ec.csv")
+
+importance.xgbTree.ec.best10 <- importance.xgbTree.ec[1:10,]
+importance.xgbTree.ec.best10$feature <- as.character(importance.xgbTree.ec.best10$feature)
+
+ggplot(importance.xgbTree.ec.best10, aes(x=reorder(feature,importance), y=importance, label=round(importance,2))) + 
+  geom_point(fill="black", size=20)  +
+  geom_segment(aes(y = 0, 
+                   x = `feature`, 
+                   yend = importance, 
+                   xend = `feature`), 
+               color = "black") +
+  geom_text(color="white", size=6) +
+  labs(title="PM2.5 EC") + 
+  ylab("Importance for eXtreme Gradient Boosting")+
+  xlab("Predictor")+
+  scale_y_continuous(expand = expansion(mult = c(0,0.05)))+
+  coord_flip()
+
+ggsave("ec.xgb.variable.importance.jpg", width = 9, height = 7)
+```
+
+**SVM SL**
+
+```{r warning=FALSE, message=FALSE, echo=FALSE}
+
+X <- training2[which(names(training2) != "value")]
+predictor <- Predictor$new(SVMPoly.2000t19.ec.SuperLearner, data = X, y = training2$value)
+start.time <- proc.time()
+svmSLImp.ec <- FeatureImp$new(predictor, loss = "rmse",n.repetitions = 5)
+time.needed.seconds <- proc.time() - start.time
+time.needed.seconds
+
+importance.svmSL.ec <- as.data.frame(svmSLImp.ec$results)
+importance.svmSL.ec
+
+importance.svmSL.ec$feature[importance.svmSL.ec$feature=="cubist.ec"] <- "Cubist"
+importance.svmSL.ec$feature[importance.svmSL.ec$feature=="gbm.ec"] <- "GBM"
+importance.svmSL.ec$feature[importance.svmSL.ec$feature=="xgb.ec"] <- "XGB"
+importance.svmSL.ec$feature[importance.svmSL.ec$feature=="rf.ec"] <- "RF"
+importance.svmSL.ec$feature[importance.svmSL.ec$feature=="year"] <- "Year"
+importance.svmSL.ec$feature[importance.svmSL.ec$feature=="lon"] <- "Longitude"
+importance.svmSL.ec$feature[importance.svmSL.ec$feature=="lat"] <- "Latitude"
+importance.svmSL.ec$feature[importance.svmSL.ec$feature=="knn.ec"] <- "KNN"
+
+#importance.svmSL.ec <- read.csv("variable.importance.svmSL.ec.csv")
+write.csv(importance.svmSL.ec, "variable.importance.svmSL.ec.csv")
+
+ggplot(importance.svmSL.ec, aes(x=reorder(feature,importance), y=importance, label=round(importance,2))) + 
+  geom_point(fill="black", size=20)  +
+  geom_segment(aes(y = 0, 
+                   x = `feature`, 
+                   yend = importance, 
+                   xend = `feature`), 
+               color = "black") +
+  geom_text(color="white", size=6) +
+  labs(title="PM2.5 EC") + 
+  ylab("Importance for Support Vector Machines with Polynomial Kernel Super Learner")+
+  xlab("Variable")+
+  scale_y_continuous(expand = expansion(mult = c(0,0.05)))+
+  coord_flip()
+ggsave("ec.SVMSL.variable.importance.jpg", width = 9, height = 7)
+
+```
+
+
+```{r warning = FALSE, message=FALSE}
+stopCluster(cl)
+```
